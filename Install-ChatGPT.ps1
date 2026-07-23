@@ -155,8 +155,15 @@ function Test-Environment {
 
     $os = Get-CimInstance -ClassName Win32_OperatingSystem
     $build = [int]$os.BuildNumber
+    $unsupportedServerDryRun = $false
     if ([int]$os.ProductType -ne 1) {
-        throw "Windows Server is not supported. Detected: $($os.Caption)."
+        if ($DryRun) {
+            $unsupportedServerDryRun = $true
+            Write-Log "Windows Server is not supported for installation. Continuing only because DryRun is enabled. Detected: $($os.Caption)." 'WARN'
+        }
+        else {
+            throw "Windows Server is not supported. Detected: $($os.Caption)."
+        }
     }
     if ($build -lt 17763) {
         throw "Windows build $build is too old. Windows 10 version 1809 (build 17763) or later is required."
@@ -185,7 +192,14 @@ function Test-Environment {
         $null = Test-Endpoint -Uri 'https://cdn.winget.microsoft.com/cache'
     }
 
-    Add-Result -Component 'Environment' -Status 'Passed' -Version "build $build / $architecture" -Detail "$freeGb GB free"
+    $environmentStatus = if ($unsupportedServerDryRun) { 'DryRun only' } else { 'Passed' }
+    $environmentDetail = if ($unsupportedServerDryRun) {
+        "Unsupported Windows Server; $freeGb GB free"
+    }
+    else {
+        "$freeGb GB free"
+    }
+    Add-Result -Component 'Environment' -Status $environmentStatus -Version "build $build / $architecture" -Detail $environmentDetail
     return $architecture
 }
 
