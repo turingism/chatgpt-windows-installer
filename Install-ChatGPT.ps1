@@ -561,7 +561,7 @@ function Test-WingetPackage {
         return ($LASTEXITCODE -eq 0)
     }
     catch {
-        Write-Log "Package verification failed for $Id: $($_.Exception.Message)" 'WARN'
+        Write-Log "Package verification failed for ${Id}: $($_.Exception.Message)" 'WARN'
         return $false
     }
 }

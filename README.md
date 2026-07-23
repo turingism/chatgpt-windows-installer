@@ -145,6 +145,8 @@ node .\tests\static-check.js
 
 The script was created and statically checked on macOS. A real Windows device or Windows CI runner is still required for end-to-end validation of UAC, Microsoft Store, `winget`, and `Add-AppxPackage` behavior.
 
+Every push and pull request also runs `.github/workflows/validate.yml` on a Windows runner. The workflow parses the script with Windows PowerShell 5.1 and executes the non-mutating `Core` profile dry-run.
+
 ## Official references
 
 - [ChatGPT desktop app for Windows](https://learn.chatgpt.com/docs/windows/windows-app)
@@ -164,4 +166,4 @@ The script was created and statically checked on macOS. A real Windows device or
 | `README.zh-CN.md` | Simplified Chinese documentation |
 | `README.zh-TW.md` | Traditional Chinese documentation |
 | `tests/static-check.js` | Cross-platform static safety and structure checks |
-
+| `.github/workflows/validate.yml` | Windows PowerShell 5.1 parsing and dry-run CI |

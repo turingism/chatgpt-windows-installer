@@ -156,6 +156,15 @@ forbidText(ps, /-AllowUnsigned/i, '未签名包放行');
 forbidText(ps, /Invoke-Expression|\biex\b/i, '动态代码执行');
 forbidText(ps, /-IgnoreSecurityHash/i, '哈希校验绕过');
 
+const invalidColonReferences = ps.match(
+  /\$(?!script:|env:|global:|local:|private:|using:)[A-Za-z_][A-Za-z0-9_]*:/g,
+);
+if (invalidColonReferences) {
+  failures.push(
+    `发现 PowerShell 5.1 无效变量引用（变量后接冒号时应使用 \${变量}:）：${[...new Set(invalidColonReferences)].join(', ')}`,
+  );
+}
+
 if (/[^\x00-\x7f]/.test(ps)) {
   failures.push('PowerShell 5.1 兼容脚本应保持 ASCII，避免无 BOM UTF-8 乱码');
 }

@@ -145,6 +145,8 @@ node .\tests\static-check.js
 
 指令碼是在 macOS 上編寫並完成靜態檢查的。UAC、Microsoft Store、`winget` 和 `Add-AppxPackage` 的端對端行為仍需在實際 Windows 裝置或 Windows CI 執行器上驗證。
 
+每次推送和提取要求還會透過 `.github/workflows/validate.yml` 在 Windows 執行器上執行檢查。該工作流程會使用 Windows PowerShell 5.1 解析指令碼，並執行不會修改系統的 `Core` 模式演練。
+
 ## 官方參考資料
 
 - [ChatGPT Windows 桌面應用程式](https://learn.chatgpt.com/docs/windows/windows-app)
@@ -164,4 +166,4 @@ node .\tests\static-check.js
 | `README.zh-CN.md` | 簡體中文說明文件 |
 | `README.zh-TW.md` | 繁體中文說明文件 |
 | `tests/static-check.js` | 跨平台靜態安全和結構檢查 |
-
+| `.github/workflows/validate.yml` | Windows PowerShell 5.1 解析和演練 CI |

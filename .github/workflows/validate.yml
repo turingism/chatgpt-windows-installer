@@ -1,0 +1,46 @@
+name: Validate installer
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-powershell:
+    name: Windows PowerShell 5.1
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Run cross-platform static checks
+        shell: pwsh
+        run: node .\tests\static-check.js
+
+      - name: Parse with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path .\Install-ChatGPT.ps1),
+              [ref]$tokens,
+              [ref]$parseErrors
+          ) | Out-Null
+
+          if ($parseErrors.Count -gt 0) {
+              $parseErrors | Format-List *
+              throw "Windows PowerShell parser reported $($parseErrors.Count) error(s)."
+          }
+
+      - name: Run Core profile dry-run
+        shell: powershell
+        run: |
+          .\Install-ChatGPT.ps1 -Profile Core -DryRun -NoLaunch
