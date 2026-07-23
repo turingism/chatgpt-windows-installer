@@ -23,6 +23,8 @@ param(
 
     [switch]$SkipWingetBootstrap,
 
+    [switch]$SkipGitHubLogin,
+
     [switch]$DryRun
 )
 
@@ -724,7 +726,7 @@ function Get-CommandVersion {
                 }
             }
             catch {
-                return 'installed'
+                # Try the next command name or the package-registration fallback.
             }
         }
     }
@@ -925,23 +927,126 @@ function Install-DeveloperTools {
     }
 }
 
+function Get-GitHubAuthenticationStatus {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GitHubCliPath
+    )
+
+    $process = $null
+    try {
+        $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $startInfo.FileName = $GitHubCliPath
+        $startInfo.Arguments = 'auth status'
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $startInfo
+        if (-not $process.Start()) {
+            throw 'The GitHub CLI authentication check could not be started.'
+        }
+
+        $standardOutput = $process.StandardOutput.ReadToEnd()
+        $standardError = $process.StandardError.ReadToEnd()
+        $process.WaitForExit()
+        $detail = (@($standardOutput, $standardError) | Where-Object { $_ }) -join ' '
+
+        return [pscustomobject]@{
+            Authenticated = ($process.ExitCode -eq 0)
+            ExitCode      = $process.ExitCode
+            Detail        = $detail.Trim()
+        }
+    }
+    catch {
+        return [pscustomobject]@{
+            Authenticated = $false
+            ExitCode      = -1
+            Detail        = $_.Exception.Message
+        }
+    }
+    finally {
+        if ($process) {
+            $process.Dispose()
+        }
+    }
+}
+
+function Invoke-GitHubWebLogin {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GitHubCliPath
+    )
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        Write-Log 'Starting GitHub browser authentication. Complete the authorization in the browser window.'
+        & $GitHubCliPath auth login --hostname github.com --git-protocol https --web 2>&1 | Out-Host
+        $loginExitCode = [int]$LASTEXITCODE
+        Write-Log ("GitHub browser authentication returned exit code {0}." -f $loginExitCode)
+        return $loginExitCode
+    }
+    catch {
+        Write-Log ("GitHub browser authentication could not be completed: {0}" -f $_.Exception.Message) 'WARN'
+        return 1
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+}
+
 function Write-PostInstallGuidance {
     Set-InstallerProgress -Percent 92 -Stage 'Final checks' -Status 'Checking account-dependent follow-up actions.'
     Write-Log 'Step 5/5 - Final checks and account-dependent setup.'
 
-    if ($Profile -eq 'Complete' -and -not $DryRun) {
+    if ($Profile -eq 'Complete') {
         $gh = Get-Command 'gh.exe' -ErrorAction SilentlyContinue
         if ($gh) {
-            & $gh.Source auth status 2>&1 | Out-Null
-            if ($LASTEXITCODE -ne 0) {
-                Write-Log 'GitHub CLI is installed but not signed in. Run: gh auth login' 'WARN'
-                Add-Result -Component 'GitHub authentication' -Status 'User action required' -Detail 'Run gh auth login' -Required $false
+            $authentication = Get-GitHubAuthenticationStatus -GitHubCliPath $gh.Source
+            if (-not $authentication.Authenticated) {
+                if ($DryRun) {
+                    Write-Log '[DryRun] GitHub CLI is not signed in; the normal run would open browser authentication.'
+                    Add-Result -Component 'GitHub authentication' -Status 'Planned' -Detail 'Would open gh auth login --web' -Required $false
+                }
+                elseif ($SkipGitHubLogin) {
+                    Write-Log 'GitHub CLI is installed but browser login was skipped. Run: gh auth login' 'WARN'
+                    Add-Result -Component 'GitHub authentication' -Status 'User action required' -Detail 'Run gh auth login' -Required $false
+                }
+                else {
+                    Set-InstallerProgress -Percent 93 -Stage 'GitHub authentication' -Status 'Opening the browser login flow; waiting for user authorization.'
+                    $loginExitCode = Invoke-GitHubWebLogin -GitHubCliPath $gh.Source
+                    Set-InstallerProgress -Percent 94 -Stage 'GitHub authentication' -Status 'Browser login returned; verifying GitHub authentication.'
+                    $authentication = Get-GitHubAuthenticationStatus -GitHubCliPath $gh.Source
+                    if ($authentication.Authenticated) {
+                        Write-Log 'GitHub CLI browser authentication completed successfully.' 'OK'
+                        Add-Result -Component 'GitHub authentication' -Status 'Ready' -Detail 'Authenticated through browser' -Required $false
+                    }
+                    else {
+                        Write-Log ("GitHub CLI login was not completed (exit code {0}). Run later: gh auth login" -f $loginExitCode) 'WARN'
+                        Add-Result -Component 'GitHub authentication' -Status 'User action required' -Detail 'Browser login incomplete; run gh auth login' -Required $false
+                    }
+                }
             }
             else {
                 Add-Result -Component 'GitHub authentication' -Status 'Ready' -Required $false
             }
         }
     }
+
+    $accountStatus = if ($DryRun) { 'Planned' } else { 'User action may be required' }
+    Add-Result `
+        -Component 'ChatGPT account sign-in' `
+        -Status $accountStatus `
+        -Detail 'Sign in inside the ChatGPT app if prompted' `
+        -Required $false
+    Add-Result `
+        -Component 'ChatGPT connectors and plugins' `
+        -Status $accountStatus `
+        -Detail 'Authorize each required connector in ChatGPT; administrator approval may be required' `
+        -Required $false
 
     Write-Log 'Plugins, skills, the built-in browser, and file previews are included in the ChatGPT app; no separate Windows plug-in package is required.'
     Write-Log 'Sign in to ChatGPT to enable account or workspace features. Connectors and third-party plugins must be authorized in the app and may be controlled by an administrator.'

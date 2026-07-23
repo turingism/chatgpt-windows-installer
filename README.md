@@ -80,6 +80,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-ChatGPT.ps1 -P
 | `-NoLaunch` | Does not launch ChatGPT after installation |
 | `-PreferMsix` | Skips the Microsoft Store attempt for ChatGPT and uses the official MSIX |
 | `-SkipWingetBootstrap` | Does not attempt to install App Installer when `winget` is missing |
+| `-SkipGitHubLogin` | Does not open GitHub CLI browser authentication when GitHub CLI is not signed in |
 | `-DryRun` | Shows the planned operations without installing packages |
 
 ## Plugins, Skills, and connectors
@@ -95,6 +96,17 @@ After the app is installed, the user must still complete account-dependent actio
 - Run `gh auth login` to enable GitHub CLI integration
 
 A generic system installer cannot safely pre-authorize account access, OAuth grants, third-party permissions, or organization policies.
+When the `Complete` profile finds GitHub CLI unsigned, the normal one-click run starts `gh auth login --web` and opens the default browser. The user must approve the authorization. Closing or cancelling the flow is reported as an optional user action, not as an installation failure. Use `-SkipGitHubLogin` for unattended or managed deployments.
+
+Authentication and consent checkpoints:
+
+| Checkpoint | Installer behavior |
+|---|---|
+| Windows UAC | Windows may request permission for a trusted installer; this is permission consent, not an account login |
+| Microsoft Store / WinGet | No account login is normally required for these package operations |
+| GitHub CLI | Opens browser authentication automatically unless already signed in or `-SkipGitHubLogin` is used |
+| ChatGPT account | Launches ChatGPT; the user signs in inside the app if prompted |
+| ChatGPT connectors and plugins | Each selected service requires its own OAuth approval inside ChatGPT and may require administrator approval |
 
 ## Logs and exit codes
 
@@ -149,7 +161,7 @@ node .\tests\static-check.js
 
 The script was created and statically checked on macOS. A real Windows device or Windows CI runner is still required for end-to-end validation of UAC, Microsoft Store, `winget`, and `Add-AppxPackage` behavior.
 
-Every push and pull request also runs `.github/workflows/validate.yml` on a Windows runner. The workflow parses the script with Windows PowerShell 5.1 and executes the non-mutating `Core` profile dry-run.
+Every push and pull request also runs `.github/workflows/validate.yml` on a Windows runner. The workflow parses the script with Windows PowerShell 5.1 and executes the non-mutating `Complete` profile dry-run, including the GitHub CLI authentication-status path.
 
 ## Official references
 

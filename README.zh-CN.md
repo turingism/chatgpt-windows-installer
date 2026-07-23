@@ -80,6 +80,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-ChatGPT.ps1 -P
 | `-NoLaunch` | 安装后不自动启动 ChatGPT |
 | `-PreferMsix` | 跳过 ChatGPT 的 Microsoft Store 尝试，使用官方 MSIX |
 | `-SkipWingetBootstrap` | 缺少 `winget` 时不尝试安装 App Installer |
+| `-SkipGitHubLogin` | GitHub CLI 未登录时不打开浏览器授权 |
 | `-DryRun` | 只显示计划执行的操作，不安装软件包 |
 
 ## 插件、Skills 与连接器
@@ -95,6 +96,17 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-ChatGPT.ps1 -P
 - 运行 `gh auth login` 启用 GitHub CLI 集成
 
 通用系统安装器不能安全地预授权账号访问、OAuth 授权、第三方权限或组织策略。
+`Complete` 模式发现 GitHub CLI 未登录时，一键流程会执行 `gh auth login --web` 并自动打开默认浏览器，用户仍需亲自确认授权。关闭或取消登录只会列为可选的“需要用户操作”，不会误报为安装失败。无人值守或企业部署可以使用 `-SkipGitHubLogin` 跳过浏览器授权。
+
+身份与权限确认节点：
+
+| 节点 | 安装器行为 |
+|---|---|
+| Windows UAC | Windows 可能要求批准受信任安装器；这是权限确认，不是账号登录 |
+| Microsoft Store / WinGet | 正常安装软件包时通常不需要账号登录 |
+| GitHub CLI | 未登录时自动打开浏览器授权；已登录或使用 `-SkipGitHubLogin` 时跳过 |
+| ChatGPT 账号 | 自动启动 ChatGPT；如应用提示，由用户在应用内登录 |
+| ChatGPT 连接器和插件 | 每个选用服务都要在 ChatGPT 内单独进行 OAuth 授权，并可能需要管理员批准 |
 
 ## 日志与退出码
 
@@ -149,7 +161,7 @@ node .\tests\static-check.js
 
 脚本是在 macOS 上编写并完成静态检查的。UAC、Microsoft Store、`winget` 和 `Add-AppxPackage` 的端到端行为仍需在真实 Windows 设备或 Windows CI 运行器上验证。
 
-每次推送和拉取请求还会通过 `.github/workflows/validate.yml` 在 Windows 运行器上执行检查。该工作流会使用 Windows PowerShell 5.1 解析脚本，并运行不会修改系统的 `Core` 模式演练。
+每次推送和拉取请求还会通过 `.github/workflows/validate.yml` 在 Windows 运行器上执行检查。该工作流会使用 Windows PowerShell 5.1 解析脚本，并运行不会修改系统的 `Complete` 模式演练，其中包括 GitHub CLI 登录状态检查路径。
 
 ## 官方参考
 

@@ -80,6 +80,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-ChatGPT.ps1 -P
 | `-NoLaunch` | 安裝後不自動啟動 ChatGPT |
 | `-PreferMsix` | 略過 ChatGPT 的 Microsoft Store 嘗試，使用官方 MSIX |
 | `-SkipWingetBootstrap` | 缺少 `winget` 時不嘗試安裝 App Installer |
+| `-SkipGitHubLogin` | GitHub CLI 未登入時不開啟瀏覽器授權 |
 | `-DryRun` | 只顯示預計執行的操作，不安裝套件 |
 
 ## 外掛程式、Skills 與連接器
@@ -95,6 +96,17 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-ChatGPT.ps1 -P
 - 執行 `gh auth login` 啟用 GitHub CLI 整合
 
 通用系統安裝程式無法安全地預先授權帳號存取、OAuth 授權、第三方權限或組織原則。
+`Complete` 模式發現 GitHub CLI 未登入時，一鍵流程會執行 `gh auth login --web` 並自動開啟預設瀏覽器，使用者仍需親自確認授權。關閉或取消登入只會列為選用的「需要使用者操作」，不會誤報為安裝失敗。無人值守或企業部署可以使用 `-SkipGitHubLogin` 略過瀏覽器授權。
+
+身分與權限確認節點：
+
+| 節點 | 安裝程式行為 |
+|---|---|
+| Windows UAC | Windows 可能要求核准受信任安裝程式；這是權限確認，不是帳號登入 |
+| Microsoft Store / WinGet | 正常安裝套件時通常不需要帳號登入 |
+| GitHub CLI | 未登入時自動開啟瀏覽器授權；已登入或使用 `-SkipGitHubLogin` 時略過 |
+| ChatGPT 帳號 | 自動啟動 ChatGPT；如應用程式提示，由使用者在應用程式內登入 |
+| ChatGPT 連接器和外掛程式 | 每個選用服務都要在 ChatGPT 內單獨進行 OAuth 授權，並可能需要管理員核准 |
 
 ## 記錄檔與結束代碼
 
@@ -149,7 +161,7 @@ node .\tests\static-check.js
 
 指令碼是在 macOS 上編寫並完成靜態檢查的。UAC、Microsoft Store、`winget` 和 `Add-AppxPackage` 的端對端行為仍需在實際 Windows 裝置或 Windows CI 執行器上驗證。
 
-每次推送和提取要求還會透過 `.github/workflows/validate.yml` 在 Windows 執行器上執行檢查。該工作流程會使用 Windows PowerShell 5.1 解析指令碼，並執行不會修改系統的 `Core` 模式演練。
+每次推送和提取要求還會透過 `.github/workflows/validate.yml` 在 Windows 執行器上執行檢查。該工作流程會使用 Windows PowerShell 5.1 解析指令碼，並執行不會修改系統的 `Complete` 模式演練，其中包括 GitHub CLI 登入狀態檢查路徑。
 
 ## 官方參考資料
 

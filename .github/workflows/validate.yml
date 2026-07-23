@@ -40,7 +40,7 @@ jobs:
               throw "Windows PowerShell parser reported $($parseErrors.Count) error(s)."
           }
 
-      - name: Run Core profile dry-run
+      - name: Run Complete profile dry-run
         shell: powershell
         run: |
-          .\Install-ChatGPT.ps1 -Profile Core -DryRun -NoLaunch
+          .\Install-ChatGPT.ps1 -Profile Complete -DryRun -NoLaunch
