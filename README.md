@@ -15,6 +15,7 @@ An idempotent PowerShell installer for the official ChatGPT desktop app on Windo
 4. When installation finishes, sign in to the ChatGPT app.
 
 The launcher uses Windows PowerShell 5.1 with a process-scoped execution-policy bypass. It does not change the machine-wide or user-wide PowerShell execution policy.
+It also switches the installer process to UTF-8 and aligns PowerShell's console and native-command encodings, preventing localized `winget` and Windows messages from becoming garbled.
 
 ## Default installation
 

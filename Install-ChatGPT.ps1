@@ -39,6 +39,18 @@ $script:LogFile = $null
 $script:ReportFile = $null
 $script:HadRequiredFailure = $false
 
+function Initialize-ConsoleEncoding {
+    try {
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [Console]::InputEncoding = $utf8NoBom
+        [Console]::OutputEncoding = $utf8NoBom
+        $global:OutputEncoding = $utf8NoBom
+    }
+    catch {
+        # Encoding setup is best-effort so restricted hosts can still run the installer.
+    }
+}
+
 function Initialize-Logging {
     if (-not $env:LOCALAPPDATA) {
         throw 'LOCALAPPDATA is unavailable. Run this installer from a normal Windows user session.'
@@ -778,6 +790,7 @@ function Show-Summary {
 
 $exitCode = 0
 try {
+    Initialize-ConsoleEncoding
     Initialize-Logging
     Write-Log "ChatGPT Windows one-click installer started. Profile=$Profile, DryRun=$DryRun."
 
