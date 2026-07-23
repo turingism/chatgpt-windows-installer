@@ -113,7 +113,7 @@ function Add-Result {
         Required  = $Required
     }
 
-    if ($Required -and $Status -eq 'Failed') {
+    if ($Required -and $Status -in @('Failed', 'Unavailable')) {
         $script:HadRequiredFailure = $true
     }
 }
@@ -760,7 +760,68 @@ function Start-ChatGPT {
     }
 }
 
+function Get-ResultGroups {
+    $installedStatuses = @('Installed', 'Installed/Updated')
+    $readyStatuses = @('Passed', 'Ready')
+
+    $installed = @($script:Results | Where-Object {
+        $installedStatuses -contains $_.Status
+    })
+    $ready = @($script:Results | Where-Object {
+        $readyStatuses -contains $_.Status
+    })
+    $failed = @($script:Results | Where-Object {
+        ($_.Status -eq 'Failed') -or ($_.Required -and $_.Status -eq 'Unavailable')
+    })
+    $other = @($script:Results | Where-Object {
+        ($installedStatuses -notcontains $_.Status) -and
+        ($readyStatuses -notcontains $_.Status) -and
+        ($_.Status -ne 'Failed') -and
+        (-not ($_.Required -and $_.Status -eq 'Unavailable'))
+    })
+
+    return [pscustomobject]@{
+        InstalledOrUpdated = $installed
+        Ready              = $ready
+        Failed             = $failed
+        Other              = $other
+    }
+}
+
+function Write-ResultGroup {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Title,
+
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [object[]]$Items,
+
+        [string]$Color = 'Gray'
+    )
+
+    Write-Host ''
+    Write-Host $Title -ForegroundColor $Color
+    if (@($Items).Count -eq 0) {
+        Write-Host '  None.'
+        return
+    }
+
+    foreach ($item in @($Items)) {
+        $versionText = ''
+        if ($item.Version) {
+            $versionText = " | Version: $($item.Version)"
+        }
+        Write-Host ("  - {0} | {1}{2}" -f $item.Component, $item.Status, $versionText)
+        if ($item.Detail) {
+            Write-Host ("    Detail: {0}" -f $item.Detail)
+        }
+    }
+}
+
 function Write-InstallationReport {
+    $groups = Get-ResultGroups
+    $requiredFailureCount = @($groups.Failed | Where-Object { $_.Required }).Count
     $report = [pscustomobject]@{
         Timestamp = (Get-Date).ToString('o')
         ComputerName = $env:COMPUTERNAME
@@ -769,6 +830,14 @@ function Write-InstallationReport {
         DryRun = [bool]$DryRun
         Success = (-not $script:HadRequiredFailure)
         Results = $script:Results
+        Summary = [pscustomobject]@{
+            InstalledOrUpdatedCount = @($groups.InstalledOrUpdated).Count
+            ReadyCount = @($groups.Ready).Count
+            FailedCount = @($groups.Failed).Count
+            RequiredFailureCount = $requiredFailureCount
+            OtherCount = @($groups.Other).Count
+            FailedComponents = @($groups.Failed | ForEach-Object { $_.Component })
+        }
         LogFile = $script:LogFile
     }
 
@@ -776,16 +845,39 @@ function Write-InstallationReport {
 }
 
 function Show-Summary {
+    $groups = Get-ResultGroups
+    $installedCount = @($groups.InstalledOrUpdated).Count
+    $readyCount = @($groups.Ready).Count
+    $failedCount = @($groups.Failed).Count
+    $otherCount = @($groups.Other).Count
+    $requiredFailureCount = @($groups.Failed | Where-Object { $_.Required }).Count
+
     Write-Host ''
-    Write-Host '================ Installation summary ================' -ForegroundColor Cyan
-    $script:Results |
-        Select-Object Component, Status, Version, Detail |
-        Format-Table -AutoSize |
-        Out-String |
-        Write-Host
+    Write-Host '================ INSTALLATION RESULTS ================' -ForegroundColor Cyan
+    Write-ResultGroup -Title 'INSTALLED OR UPDATED' -Items $groups.InstalledOrUpdated -Color 'Green'
+    Write-ResultGroup -Title 'ALREADY READY / CHECKS PASSED' -Items $groups.Ready -Color 'Cyan'
+    Write-ResultGroup -Title 'FAILED' -Items $groups.Failed -Color 'Red'
+    Write-ResultGroup -Title 'SKIPPED / PLANNED / ACTION REQUIRED' -Items $groups.Other -Color 'Yellow'
+    Write-Host ''
+    Write-Host ("Totals: installed/updated={0}; ready={1}; failed={2}; other={3}." -f $installedCount, $readyCount, $failedCount, $otherCount)
+
+    if ($DryRun) {
+        Write-Host 'FINAL RESULT: DRY RUN ONLY - nothing was installed.' -ForegroundColor Yellow
+    }
+    elseif ($requiredFailureCount -gt 0) {
+        Write-Host ("FINAL RESULT: FAILED - {0} required component(s) failed." -f $requiredFailureCount) -ForegroundColor Red
+    }
+    elseif ($failedCount -gt 0) {
+        Write-Host ("FINAL RESULT: REQUIRED COMPONENTS SUCCEEDED, but {0} optional component(s) failed." -f $failedCount) -ForegroundColor Yellow
+    }
+    else {
+        Write-Host 'FINAL RESULT: SUCCESS - no component failed.' -ForegroundColor Green
+    }
+
+    Write-Host ''
     Write-Host "Log:    $script:LogFile"
     Write-Host "Report: $script:ReportFile"
-    Write-Host '======================================================' -ForegroundColor Cyan
+    Write-Host '=======================================================' -ForegroundColor Cyan
 }
 
 $exitCode = 0
@@ -829,10 +921,18 @@ catch {
 finally {
     try {
         Write-InstallationReport
+    }
+    catch {
+        $exitCode = 1
+        Write-Host "The final report could not be written: $($_.Exception.Message)" -ForegroundColor Red
+    }
+
+    try {
         Show-Summary
     }
     catch {
-        Write-Host "The final report could not be written: $($_.Exception.Message)" -ForegroundColor Red
+        $exitCode = 1
+        Write-Host "The installation summary could not be displayed: $($_.Exception.Message)" -ForegroundColor Red
     }
 
     if ($script:TempDirectory -and (Test-Path -LiteralPath $script:TempDirectory)) {

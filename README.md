@@ -106,7 +106,7 @@ Logs and machine-readable reports are written to:
 - Exit code `0`: every required component in the selected profile succeeded
 - Exit code `1`: at least one required component failed
 
-ChatGPT itself may still be installed when an optional or developer component fails. Check the JSON report for per-component status.
+When the script finishes, the terminal displays separate lists for installed or updated components, components that were already ready, failures, and skipped or pending actions. It also shows totals and an explicit final result. ChatGPT itself may still be installed when an optional or developer component fails. The JSON report includes the same itemized results, counts, and failed component names.
 
 ## Security behavior
 
