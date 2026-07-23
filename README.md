@@ -108,6 +108,8 @@ Logs and machine-readable reports are written to:
 
 When the script finishes, the terminal displays separate lists for installed or updated components, components that were already ready, failures, and skipped or pending actions. It also shows totals and an explicit final result. ChatGPT itself may still be installed when an optional or developer component fails. The JSON report includes the same itemized results, counts, and failed component names.
 
+Python verification allows time for the installer registration and PATH update to become visible. It checks WinGet registration, the Python Launcher (`py.exe`), the interpreter, standard Python 3.14 installation paths, and Windows uninstall registration before reporting a failure.
+
 ## Security behavior
 
 The installer:

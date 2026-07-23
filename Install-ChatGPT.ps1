@@ -583,7 +583,7 @@ function Test-WingetPackage {
     }
 
     try {
-        & $script:WingetPath list --id $Id --exact --source winget --accept-source-agreements --disable-interactivity 2>&1 | Out-Null
+        & $script:WingetPath list --id $Id --exact --accept-source-agreements --disable-interactivity 2>&1 | Out-Null
         return ($LASTEXITCODE -eq 0)
     }
     catch {
@@ -607,7 +607,7 @@ function Get-CommandVersion {
         if ($command) {
             try {
                 $versionOutput = & $command.Source @VersionArguments 2>&1 | Select-Object -First 1
-                if ($versionOutput) {
+                if (($LASTEXITCODE -eq 0) -and $versionOutput) {
                     return [string]$versionOutput
                 }
             }
@@ -616,6 +616,56 @@ function Get-CommandVersion {
             }
         }
     }
+    return ''
+}
+
+function Get-PythonInstalledVersion {
+    $version = Get-CommandVersion `
+        -CommandNames @('py.exe', 'py', 'python.exe', 'python') `
+        -VersionArguments @('--version')
+    if ($version) {
+        return $version
+    }
+
+    $knownPaths = @(
+        (Join-Path $env:LOCALAPPDATA 'Programs\Python\Python314\python.exe'),
+        (Join-Path $env:ProgramFiles 'Python314\python.exe')
+    )
+    if (${env:ProgramFiles(x86)}) {
+        $knownPaths += Join-Path ${env:ProgramFiles(x86)} 'Python314\python.exe'
+    }
+
+    foreach ($path in $knownPaths) {
+        if (Test-Path -LiteralPath $path) {
+            try {
+                $versionOutput = & $path --version 2>&1 | Select-Object -First 1
+                if (($LASTEXITCODE -eq 0) -and $versionOutput) {
+                    return [string]$versionOutput
+                }
+            }
+            catch {
+                # Continue to the registry fallback.
+            }
+        }
+    }
+
+    $registryPaths = @(
+        'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+        'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+        'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+    )
+    foreach ($registryPath in $registryPaths) {
+        $entry = Get-ItemProperty -Path $registryPath -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -like 'Python 3.14*' } |
+            Select-Object -First 1
+        if ($entry) {
+            if ($entry.DisplayVersion) {
+                return "Python $($entry.DisplayVersion)"
+            }
+            return 'Python 3.14 installed'
+        }
+    }
+
     return ''
 }
 
@@ -644,11 +694,30 @@ function Install-DeveloperTool {
         $exitCode = Invoke-Winget -Arguments $arguments
     }
 
-    $installed = Test-WingetPackage -Id $Tool.Id
-    $version = Get-CommandVersion -CommandNames $Tool.Commands -VersionArguments $Tool.VersionArguments
     if ($DryRun) {
         Add-Result -Component $Tool.Name -Status 'Planned' -Detail $Tool.Id
         return
+    }
+
+    $installed = $false
+    $version = ''
+    foreach ($verificationAttempt in 1..3) {
+        Refresh-ProcessPath
+        $installed = Test-WingetPackage -Id $Tool.Id
+        if ($Tool.Id -eq 'Python.Python.3.14') {
+            $version = Get-PythonInstalledVersion
+        }
+        else {
+            $version = Get-CommandVersion -CommandNames $Tool.Commands -VersionArguments $Tool.VersionArguments
+        }
+
+        if ($installed -or $version) {
+            break
+        }
+        if ($verificationAttempt -lt 3) {
+            Write-Log ("Verification for {0} is not ready yet; retrying ({1}/3)." -f $Tool.Name, $verificationAttempt) 'WARN'
+            Start-Sleep -Seconds (2 * $verificationAttempt)
+        }
     }
 
     if ($installed -or $version) {
@@ -697,7 +766,7 @@ function Install-DeveloperTools {
         [pscustomobject]@{
             Name = 'Python'
             Id = 'Python.Python.3.14'
-            Commands = @('python.exe', 'python')
+            Commands = @('py.exe', 'py', 'python.exe', 'python')
             VersionArguments = @('--version')
         },
         [pscustomobject]@{

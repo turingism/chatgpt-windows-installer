@@ -108,6 +108,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-ChatGPT.ps1 -P
 
 指令碼結束時，終端會分別列出「已安裝或更新」、「原本已就緒」、「安裝失敗」以及「已略過或需要後續操作」的元件，並顯示各類數量和明確的最終結論。當選用元件或開發工具失敗時，ChatGPT 本體仍可能已經安裝成功。JSON 報告也會儲存相同的逐項結果、數量以及失敗元件名稱。
 
+Python 安裝完成後，指令碼會等待安裝註冊和 PATH 更新生效，並透過 WinGet 註冊資訊、Python Launcher（`py.exe`）、直譯器、Python 3.14 標準安裝路徑及 Windows 解除安裝註冊資訊進行多重驗證，全部無法確認時才會回報失敗。
+
 ## 安全行為
 
 安裝程式：

@@ -108,6 +108,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-ChatGPT.ps1 -P
 
 脚本结束时，终端会分别列出“已安装或更新”“原本已就绪”“安装失败”以及“已跳过或需要后续操作”的组件，并显示各类数量和明确的最终结论。当可选组件或开发工具失败时，ChatGPT 本体仍可能已经安装成功。JSON 报告也会保存相同的逐项结果、数量以及失败组件名称。
 
+Python 安装完成后，脚本会等待安装注册和 PATH 更新生效，并通过 WinGet 注册信息、Python Launcher（`py.exe`）、解释器、Python 3.14 标准安装路径及 Windows 卸载注册信息进行多重验证，全部无法确认时才会报告失败。
+
 ## 安全行为
 
 安装器：
