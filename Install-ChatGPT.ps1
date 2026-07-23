@@ -38,6 +38,7 @@ $script:TempDirectory = $null
 $script:LogFile = $null
 $script:ReportFile = $null
 $script:HadRequiredFailure = $false
+$script:LastProgressKey = ''
 
 function Initialize-ConsoleEncoding {
     try {
@@ -87,6 +88,63 @@ function Write-Log {
         'ERROR' { Write-Host $line -ForegroundColor Red }
         'CMD'   { Write-Host $line -ForegroundColor DarkGray }
         default { Write-Host $line }
+    }
+}
+
+function Set-InstallerProgress {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateRange(0, 100)]
+        [int]$Percent,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Stage,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Status
+    )
+
+    $progressText = '{0}% - {1}' -f $Percent, $Status
+    $previousProgressPreference = $ProgressPreference
+    try {
+        $ProgressPreference = 'Continue'
+        Write-Progress `
+            -Id 1 `
+            -Activity 'ChatGPT Windows One-Click Installer' `
+            -Status $progressText `
+            -CurrentOperation $Stage `
+            -PercentComplete $Percent
+    }
+    finally {
+        $ProgressPreference = $previousProgressPreference
+    }
+
+    $progressKey = '{0}|{1}|{2}' -f $Percent, $Stage, $Status
+    if ($script:LastProgressKey -ne $progressKey) {
+        $script:LastProgressKey = $progressKey
+        $line = '[{0}] [PROGRESS {1,3}%] {2} - {3}' -f `
+            (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Percent, $Stage, $Status
+        if ($script:LogFile) {
+            Add-Content -LiteralPath $script:LogFile -Value $line -Encoding UTF8
+        }
+        Write-Host $line -ForegroundColor Cyan
+    }
+}
+
+function Complete-InstallerProgress {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Status
+    )
+
+    Set-InstallerProgress -Percent 100 -Stage 'Complete' -Status $Status
+    $previousProgressPreference = $ProgressPreference
+    try {
+        $ProgressPreference = 'Continue'
+        Write-Progress -Id 1 -Activity 'ChatGPT Windows One-Click Installer' -Completed
+    }
+    finally {
+        $ProgressPreference = $previousProgressPreference
     }
 }
 
@@ -159,6 +217,7 @@ function Test-Endpoint {
 }
 
 function Test-Environment {
+    Set-InstallerProgress -Percent 8 -Stage 'Environment' -Status 'Checking Windows, architecture, disk space, and network.'
     Write-Log 'Step 1/5 - Checking Windows, architecture, disk, and network.'
 
     if ($env:OS -ne 'Windows_NT') {
@@ -212,6 +271,7 @@ function Test-Environment {
         "$freeGb GB free"
     }
     Add-Result -Component 'Environment' -Status $environmentStatus -Version "build $build / $architecture" -Detail $environmentDetail
+    Set-InstallerProgress -Percent 15 -Stage 'Environment' -Status 'Environment checks completed.'
     return $architecture
 }
 
@@ -231,11 +291,19 @@ function Invoke-Download {
         [string]$Uri,
 
         [Parameter(Mandatory = $true)]
-        [string]$Destination
+        [string]$Destination,
+
+        [ValidateRange(-1, 100)]
+        [int]$ProgressPercent = -1,
+
+        [string]$ProgressStage = 'Download'
     )
 
     if ($DryRun) {
         Write-Log "[DryRun] Would download $Uri to $Destination."
+        if ($ProgressPercent -ge 0) {
+            Set-InstallerProgress -Percent $ProgressPercent -Stage $ProgressStage -Status 'Dry run: download planned.'
+        }
         return
     }
 
@@ -243,8 +311,16 @@ function Invoke-Download {
     foreach ($attempt in 1..3) {
         try {
             Write-Log "Downloading $Uri (attempt $attempt/3)."
+            if ($ProgressPercent -ge 0) {
+                Set-InstallerProgress -Percent $ProgressPercent -Stage $ProgressStage -Status ("Download started (attempt {0}/3); waiting for data." -f $attempt)
+            }
             Invoke-WebRequest -Uri $Uri -OutFile $Destination -UseBasicParsing -MaximumRedirection 10 -TimeoutSec 300
             if ((Test-Path -LiteralPath $Destination) -and ((Get-Item -LiteralPath $Destination).Length -gt 0)) {
+                $downloadSizeMb = [math]::Round((Get-Item -LiteralPath $Destination).Length / 1MB, 2)
+                Write-Log ("Download completed: {0} MB." -f $downloadSizeMb) 'OK'
+                if ($ProgressPercent -ge 0) {
+                    Set-InstallerProgress -Percent $ProgressPercent -Stage $ProgressStage -Status ("Download completed ({0} MB)." -f $downloadSizeMb)
+                }
                 return
             }
             throw 'The downloaded file is empty.'
@@ -303,6 +379,7 @@ function Get-WingetVersion {
 }
 
 function Ensure-Winget {
+    Set-InstallerProgress -Percent 18 -Stage 'Package manager' -Status 'Checking Windows Package Manager (WinGet).'
     Write-Log 'Step 2/5 - Checking Windows Package Manager (WinGet).'
 
     $script:WingetPath = Find-Winget
@@ -311,6 +388,7 @@ function Ensure-Winget {
         if ($version) {
             Write-Log "WinGet is available: $version." 'OK'
             Add-Result -Component 'WinGet' -Status 'Ready' -Version $version -Detail 'Existing installation' -Required ($Profile -eq 'Complete')
+            Set-InstallerProgress -Percent 25 -Stage 'Package manager' -Status 'WinGet is ready.'
             return $true
         }
 
@@ -321,6 +399,7 @@ function Ensure-Winget {
     if ($SkipWingetBootstrap) {
         Write-Log 'WinGet is missing and bootstrap was disabled.' 'WARN'
         Add-Result -Component 'WinGet' -Status 'Unavailable' -Detail 'Bootstrap disabled' -Required ($Profile -eq 'Complete')
+        Set-InstallerProgress -Percent 25 -Stage 'Package manager' -Status 'WinGet is unavailable; bootstrap was skipped.'
         return $false
     }
 
@@ -329,13 +408,18 @@ function Ensure-Winget {
         Write-Log '[DryRun] Would bootstrap WinGet from https://aka.ms/getwinget.'
         $script:WingetPath = 'winget.exe'
         Add-Result -Component 'WinGet' -Status 'Planned' -Detail 'Official App Installer bootstrap' -Required ($Profile -eq 'Complete')
+        Set-InstallerProgress -Percent 25 -Stage 'Package manager' -Status 'Dry run: WinGet bootstrap planned.'
         return $true
     }
 
     try {
         $bundle = Join-Path $script:TempDirectory 'Microsoft.DesktopAppInstaller.msixbundle'
-        Invoke-Download -Uri 'https://aka.ms/getwinget' -Destination $bundle
+        Invoke-Download -Uri 'https://aka.ms/getwinget' -Destination $bundle -ProgressPercent 20 -ProgressStage 'WinGet download'
+        Set-InstallerProgress -Percent 22 -Stage 'Package manager' -Status 'Starting Windows App Installer package registration.'
+        Write-Log 'Starting Windows App Installer package registration. A separate window may not appear.'
         Add-AppxPackage -Path $bundle -ForceApplicationShutdown
+        Write-Log 'Windows App Installer registration returned; verifying WinGet.'
+        Set-InstallerProgress -Percent 23 -Stage 'Package manager' -Status 'App Installer returned; verifying WinGet.'
         Start-Sleep -Seconds 2
         $script:WingetPath = Find-Winget
         if (-not $script:WingetPath) {
@@ -348,11 +432,13 @@ function Ensure-Winget {
         }
         Write-Log "WinGet bootstrap completed: $version." 'OK'
         Add-Result -Component 'WinGet' -Status 'Installed' -Version $version -Detail 'Official App Installer bootstrap' -Required ($Profile -eq 'Complete')
+        Set-InstallerProgress -Percent 25 -Stage 'Package manager' -Status 'WinGet installation and verification completed.'
         return $true
     }
     catch {
         Write-Log "WinGet bootstrap failed: $($_.Exception.Message)" 'WARN'
         Add-Result -Component 'WinGet' -Status 'Unavailable' -Detail $_.Exception.Message -Required ($Profile -eq 'Complete')
+        Set-InstallerProgress -Percent 25 -Stage 'Package manager' -Status 'WinGet bootstrap failed; continuing where possible.'
         return $false
     }
 }
@@ -374,10 +460,13 @@ function Invoke-Winget {
 
     try {
         Write-Log ("winget " + ($Arguments -join ' ')) 'CMD'
+        Write-Log 'Starting the WinGet process now. Silent package installers may not open a separate window.'
         & $script:WingetPath @Arguments 2>&1 | ForEach-Object {
             Write-Log ([string]$_) 'CMD'
         }
-        return [int]$LASTEXITCODE
+        $wingetExitCode = [int]$LASTEXITCODE
+        Write-Log ("WinGet process finished and returned exit code {0}." -f $wingetExitCode)
+        return $wingetExitCode
     }
     catch {
         Write-Log "WinGet command failed to start: $($_.Exception.Message)" 'WARN'
@@ -478,18 +567,30 @@ function Install-ChatGPTWithWinget {
         '--disable-interactivity'
     )
 
+    Set-InstallerProgress -Percent 32 -Stage 'ChatGPT' -Status 'Starting the Microsoft Store installation through WinGet.'
+    Write-Log 'Starting the ChatGPT Microsoft Store installer through WinGet. It runs silently and may not open a separate window.'
     $exitCode = Invoke-Winget -Arguments $arguments
+    Set-InstallerProgress -Percent 42 -Stage 'ChatGPT' -Status ("WinGet returned exit code {0}; verifying ChatGPT." -f $exitCode)
     if (($exitCode -ne 0) -and (-not $DryRun)) {
         Write-Log "ChatGPT WinGet operation returned exit code $exitCode. Refreshing sources and retrying once." 'WARN'
+        Set-InstallerProgress -Percent 42 -Stage 'ChatGPT' -Status 'First WinGet attempt failed; refreshing sources and retrying.'
         Update-WingetSources
         $exitCode = Invoke-Winget -Arguments $arguments
+        Set-InstallerProgress -Percent 43 -Stage 'ChatGPT' -Status ("WinGet retry returned exit code {0}; verifying ChatGPT." -f $exitCode)
     }
 
     if ($DryRun) {
         return $true
     }
 
-    return (Test-ChatGPTInstalled)
+    $verified = Test-ChatGPTInstalled
+    if ($verified) {
+        Set-InstallerProgress -Percent 48 -Stage 'ChatGPT' -Status 'Microsoft Store installation verified.'
+    }
+    else {
+        Set-InstallerProgress -Percent 43 -Stage 'ChatGPT' -Status 'Store installation was not verified; preparing MSIX fallback.'
+    }
+    return $verified
 }
 
 function Install-ChatGPTWithMsix {
@@ -504,22 +605,29 @@ function Install-ChatGPTWithMsix {
 
     if ($DryRun) {
         Write-Log "[DryRun] Would install OpenAI's Store-signed package from $uri."
+        Set-InstallerProgress -Percent 48 -Stage 'ChatGPT' -Status 'Dry run: official MSIX installation planned.'
         return $true
     }
 
     try {
-        Invoke-Download -Uri $uri -Destination $msixPath
+        Invoke-Download -Uri $uri -Destination $msixPath -ProgressPercent 44 -ProgressStage 'ChatGPT MSIX download'
+        Set-InstallerProgress -Percent 45 -Stage 'ChatGPT' -Status 'Inspecting the downloaded MSIX package identity.'
         $identity = Get-MsixIdentity -Path $msixPath
         $script:ChatGPTIdentityName = $identity.Name
         Write-Log "MSIX identity: $($identity.Name), version $($identity.Version), publisher $($identity.Publisher)."
         Write-Log 'Windows will validate the Store signature and package trust during Add-AppxPackage.'
+        Write-Log 'Starting ChatGPT MSIX registration now. A separate installer window may not appear.'
+        Set-InstallerProgress -Percent 46 -Stage 'ChatGPT' -Status 'Starting Windows MSIX registration and signature validation.'
         Add-AppxPackage -Path $msixPath -ForceApplicationShutdown
+        Write-Log 'ChatGPT MSIX registration returned; verifying the installed application.'
+        Set-InstallerProgress -Percent 47 -Stage 'ChatGPT' -Status 'MSIX registration returned; verifying ChatGPT.'
 
         $installed = Get-ChatGPTPackage
         if (-not $installed) {
             throw 'MSIX registration finished, but the installed package could not be verified.'
         }
 
+        Set-InstallerProgress -Percent 48 -Stage 'ChatGPT' -Status 'Official MSIX installation verified.'
         return $true
     }
     catch {
@@ -539,6 +647,7 @@ function Install-ChatGPT {
         [string]$Architecture
     )
 
+    Set-InstallerProgress -Percent 28 -Stage 'ChatGPT' -Status 'Preparing to install or update the official ChatGPT app.'
     Write-Log 'Step 3/5 - Installing or updating the official ChatGPT app.'
     $installed = $false
     $method = ''
@@ -557,11 +666,13 @@ function Install-ChatGPT {
 
     if (-not $installed) {
         Add-Result -Component 'ChatGPT' -Status 'Failed' -Detail 'Both WinGet and MSIX installation paths failed.'
+        Set-InstallerProgress -Percent 50 -Stage 'ChatGPT' -Status 'ChatGPT installation failed; see the final failure list.'
         return $false
     }
 
     if ($DryRun) {
         Add-Result -Component 'ChatGPT' -Status 'Planned' -Detail $method
+        Set-InstallerProgress -Percent 50 -Stage 'ChatGPT' -Status 'Dry run: ChatGPT installation plan completed.'
         return $true
     }
 
@@ -569,6 +680,7 @@ function Install-ChatGPT {
     $version = if ($package) { [string]$package.Version } else { 'installed' }
     Write-Log "ChatGPT is installed and verified ($version)." 'OK'
     Add-Result -Component 'ChatGPT' -Status 'Installed/Updated' -Version $version -Detail $method
+    Set-InstallerProgress -Percent 50 -Stage 'ChatGPT' -Status 'ChatGPT installation and verification completed.'
     return $true
 }
 
@@ -672,7 +784,15 @@ function Get-PythonInstalledVersion {
 function Install-DeveloperTool {
     param(
         [Parameter(Mandatory = $true)]
-        [pscustomobject]$Tool
+        [pscustomobject]$Tool,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateRange(0, 100)]
+        [int]$ProgressStart,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateRange(0, 100)]
+        [int]$ProgressEnd
     )
 
     $arguments = @(
@@ -686,19 +806,28 @@ function Install-DeveloperTool {
         '--disable-interactivity'
     )
 
+    Set-InstallerProgress -Percent $ProgressStart -Stage $Tool.Name -Status 'Starting the silent package installer.'
     Write-Log "Installing or updating $($Tool.Name) ($($Tool.Id))."
+    Write-Log ("Starting the {0} installer now. It may run silently without a separate window." -f $Tool.Name)
     $exitCode = Invoke-Winget -Arguments $arguments
+    $returnedPercent = [math]::Min($ProgressEnd - 2, $ProgressStart + 3)
+    Set-InstallerProgress -Percent $returnedPercent -Stage $Tool.Name -Status ("Installer process returned exit code {0}; preparing verification." -f $exitCode)
     if (($exitCode -ne 0) -and (-not $DryRun)) {
         Write-Log "$($Tool.Name) returned exit code $exitCode. Refreshing sources and retrying once." 'WARN'
+        Set-InstallerProgress -Percent $returnedPercent -Stage $Tool.Name -Status 'First attempt failed; refreshing WinGet sources and retrying.'
         Update-WingetSources
         $exitCode = Invoke-Winget -Arguments $arguments
+        Set-InstallerProgress -Percent $returnedPercent -Stage $Tool.Name -Status ("Retry returned exit code {0}; preparing verification." -f $exitCode)
     }
 
     if ($DryRun) {
         Add-Result -Component $Tool.Name -Status 'Planned' -Detail $Tool.Id
+        Set-InstallerProgress -Percent $ProgressEnd -Stage $Tool.Name -Status 'Dry run: installation planned.'
         return
     }
 
+    $verificationPercent = [math]::Max($ProgressStart, $ProgressEnd - 1)
+    Set-InstallerProgress -Percent $verificationPercent -Stage $Tool.Name -Status 'Verifying package registration and executable version.'
     $installed = $false
     $version = ''
     foreach ($verificationAttempt in 1..3) {
@@ -727,25 +856,30 @@ function Install-DeveloperTool {
         }
         Write-Log "$($Tool.Name) is installed$versionText." 'OK'
         Add-Result -Component $Tool.Name -Status 'Installed/Updated' -Version $version -Detail $Tool.Id
+        Set-InstallerProgress -Percent $ProgressEnd -Stage $Tool.Name -Status 'Installation verified.'
     }
     else {
         Write-Log "$($Tool.Name) could not be verified after installation." 'ERROR'
         Add-Result -Component $Tool.Name -Status 'Failed' -Detail "WinGet exit code $exitCode; package $($Tool.Id)"
+        Set-InstallerProgress -Percent $ProgressEnd -Stage $Tool.Name -Status 'Verification failed; details will appear in the final summary.'
     }
 }
 
 function Install-DeveloperTools {
+    Set-InstallerProgress -Percent 52 -Stage 'Developer tools' -Status 'Preparing the optional developer tool installations.'
     Write-Log 'Step 4/5 - Installing or updating OpenAI-recommended developer tools.'
 
     if ($Profile -eq 'Core') {
         Write-Log 'Core profile selected; optional developer tools are skipped.'
         Add-Result -Component 'Developer tools' -Status 'Skipped' -Detail 'Core profile' -Required $false
+        Set-InstallerProgress -Percent 90 -Stage 'Developer tools' -Status 'Skipped because the Core profile is selected.'
         return
     }
 
     if (-not $script:WingetPath) {
         Write-Log 'Developer tools require WinGet, but WinGet is unavailable.' 'ERROR'
         Add-Result -Component 'Developer tools' -Status 'Failed' -Detail 'WinGet unavailable'
+        Set-InstallerProgress -Percent 90 -Stage 'Developer tools' -Status 'Developer tools failed because WinGet is unavailable.'
         return
     }
 
@@ -783,12 +917,16 @@ function Install-DeveloperTools {
         }
     )
 
-    foreach ($tool in $tools) {
-        Install-DeveloperTool -Tool $tool
+    for ($toolIndex = 0; $toolIndex -lt $tools.Count; $toolIndex++) {
+        $tool = $tools[$toolIndex]
+        $progressStart = 55 + ($toolIndex * 7)
+        $progressEnd = $progressStart + 7
+        Install-DeveloperTool -Tool $tool -ProgressStart $progressStart -ProgressEnd $progressEnd
     }
 }
 
 function Write-PostInstallGuidance {
+    Set-InstallerProgress -Percent 92 -Stage 'Final checks' -Status 'Checking account-dependent follow-up actions.'
     Write-Log 'Step 5/5 - Final checks and account-dependent setup.'
 
     if ($Profile -eq 'Complete' -and -not $DryRun) {
@@ -807,25 +945,35 @@ function Write-PostInstallGuidance {
 
     Write-Log 'Plugins, skills, the built-in browser, and file previews are included in the ChatGPT app; no separate Windows plug-in package is required.'
     Write-Log 'Sign in to ChatGPT to enable account or workspace features. Connectors and third-party plugins must be authorized in the app and may be controlled by an administrator.'
+    Set-InstallerProgress -Percent 95 -Stage 'Final checks' -Status 'Final account and feature checks completed.'
 }
 
 function Start-ChatGPT {
     if ($NoLaunch -or $DryRun) {
+        $reason = if ($DryRun) { 'dry run' } else { 'NoLaunch option' }
+        Write-Log ("Automatic ChatGPT launch skipped ({0})." -f $reason)
+        Set-InstallerProgress -Percent 98 -Stage 'Launch ChatGPT' -Status ("Automatic launch skipped ({0})." -f $reason)
         return
     }
 
     try {
+        Set-InstallerProgress -Percent 96 -Stage 'Launch ChatGPT' -Status 'Looking up the ChatGPT Start menu application.'
         $entry = Get-StartApps | Where-Object { $_.Name -eq 'ChatGPT' } | Select-Object -First 1
         if ($entry) {
+            Write-Log 'Sending the ChatGPT launch request to Windows.'
+            Set-InstallerProgress -Percent 97 -Stage 'Launch ChatGPT' -Status 'Sending the launch request to Windows.'
             Start-Process 'explorer.exe' -ArgumentList "shell:AppsFolder\$($entry.AppID)"
-            Write-Log 'ChatGPT was launched. Complete sign-in in the app.' 'OK'
+            Write-Log 'The ChatGPT launch request was accepted by Windows. Complete sign-in in the app.' 'OK'
+            Set-InstallerProgress -Percent 98 -Stage 'Launch ChatGPT' -Status 'Launch request accepted by Windows.'
         }
         else {
             Write-Log 'ChatGPT is installed, but its Start menu entry was not available yet. Open ChatGPT from the Start menu.' 'WARN'
+            Set-InstallerProgress -Percent 98 -Stage 'Launch ChatGPT' -Status 'Start menu entry not ready; launch ChatGPT manually.'
         }
     }
     catch {
         Write-Log "ChatGPT could not be launched automatically: $($_.Exception.Message)" 'WARN'
+        Set-InstallerProgress -Percent 98 -Stage 'Launch ChatGPT' -Status 'Automatic launch failed; open ChatGPT manually.'
     }
 }
 
@@ -953,6 +1101,7 @@ $exitCode = 0
 try {
     Initialize-ConsoleEncoding
     Initialize-Logging
+    Set-InstallerProgress -Percent 0 -Stage 'Initialization' -Status 'Installer started.'
     Write-Log "ChatGPT Windows one-click installer started. Profile=$Profile, DryRun=$DryRun."
 
     try {
@@ -963,6 +1112,7 @@ try {
         Write-Log 'TLS 1.2 could not be explicitly enabled; continuing with the Windows default.' 'WARN'
     }
 
+    Set-InstallerProgress -Percent 4 -Stage 'Initialization' -Status 'Creating the temporary working directory.'
     $null = New-InstallerTempDirectory
     $architecture = Test-Environment
     $null = Ensure-Winget
@@ -971,6 +1121,9 @@ try {
         Install-DeveloperTools
         Write-PostInstallGuidance
         Start-ChatGPT
+    }
+    else {
+        Set-InstallerProgress -Percent 98 -Stage 'Installation stopped' -Status 'ChatGPT failed, so dependent steps were skipped.'
     }
 
     if ($script:HadRequiredFailure) {
@@ -989,6 +1142,7 @@ catch {
 }
 finally {
     try {
+        Set-InstallerProgress -Percent 99 -Stage 'Report' -Status 'Writing the detailed JSON report.'
         Write-InstallationReport
     }
     catch {
@@ -1006,6 +1160,13 @@ finally {
 
     if ($script:TempDirectory -and (Test-Path -LiteralPath $script:TempDirectory)) {
         Remove-Item -LiteralPath $script:TempDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    if ($exitCode -eq 0) {
+        Complete-InstallerProgress -Status 'All requested operations finished successfully.'
+    }
+    else {
+        Complete-InstallerProgress -Status 'Finished with one or more failures; review the summary above.'
     }
 }
 

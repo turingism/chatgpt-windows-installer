@@ -16,6 +16,7 @@ An idempotent PowerShell installer for the official ChatGPT desktop app on Windo
 
 The launcher uses Windows PowerShell 5.1 with a process-scoped execution-policy bypass. It does not change the machine-wide or user-wide PowerShell execution policy.
 It also switches the installer process to UTF-8 and aligns PowerShell's console and native-command encodings, preventing localized `winget` and Windows messages from becoming garbled.
+During installation, Windows displays an overall progress bar and the terminal keeps timestamped `[PROGRESS xx%]` lines. Silent installer launches, process return codes, verification, and the final ChatGPT launch request are announced explicitly, so a missing pop-up window does not look like a stalled installer.
 
 ## Default installation
 
